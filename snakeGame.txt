@@ -1,0 +1,203 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+// Display configuration
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET    -1  // No reset pin used
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// Define grid parameters (each cell is 4x4 pixels)
+#define CELL_SIZE 4
+#define GRID_WIDTH  (SCREEN_WIDTH / CELL_SIZE)   // 32 cells
+#define GRID_HEIGHT (SCREEN_HEIGHT / CELL_SIZE)  // 16 cells
+
+// Pin for the tactile button (wired to ground when pressed)
+#define BUTTON_PIN 2
+
+// Maximum snake length
+#define MAX_SNAKE_LENGTH 64
+
+// Structure for grid coordinates
+struct Point {
+  int x;
+  int y;
+};
+
+// Snake body array and current length (in grid cells)
+Point snakeBody[MAX_SNAKE_LENGTH];
+int snakeLength = 3;
+
+// Snake movement direction (starts moving to the right)
+int dx = 1;
+int dy = 0;
+
+// Food position on grid
+Point food;
+
+// Timing for movement
+unsigned long lastMoveTime = 0;
+const unsigned long moveInterval = 200; // milliseconds
+
+// Game state flag
+bool gameOver = false;
+
+// Spawn food in a random grid cell not occupied by the snake
+void spawnFood() {
+  bool valid = false;
+  while (!valid) {
+    food.x = random(0, GRID_WIDTH);
+    food.y = random(0, GRID_HEIGHT);
+    valid = true;
+    // Ensure food does not appear on the snake
+    for (int i = 0; i < snakeLength; i++) {
+      if (snakeBody[i].x == food.x && snakeBody[i].y == food.y) {
+        valid = false;
+        break;
+      }
+    }
+  }
+}
+
+// Rotate the snake’s direction clockwise:
+// Right (1,0) → Down (0,1) → Left (-1,0) → Up (0,-1) → Right …
+void changeDirection() {
+  int newDx = -dy;
+  int newDy = dx;
+  dx = newDx;
+  dy = newDy;
+}
+
+// Update the snake’s position, check for collisions and food consumption
+void updateGame() {
+  // Calculate new head position
+  Point newHead;
+  newHead.x = snakeBody[0].x + dx;
+  newHead.y = snakeBody[0].y + dy;
+
+  // Check for collision with walls
+  if (newHead.x < 0 || newHead.x >= GRID_WIDTH || newHead.y < 0 || newHead.y >= GRID_HEIGHT) {
+    gameOver = true;
+    return;
+  }
+  // Check for collision with itself
+  for (int i = 0; i < snakeLength; i++) {
+    if (snakeBody[i].x == newHead.x && snakeBody[i].y == newHead.y) {
+      gameOver = true;
+      return;
+    }
+  }
+
+  // Check if the snake eats the food
+  bool ateFood = (newHead.x == food.x && newHead.y == food.y);
+
+  // Shift the snake segments (starting from the tail)
+  for (int i = snakeLength; i > 0; i--) {
+    snakeBody[i] = snakeBody[i - 1];
+  }
+  // Insert the new head at the beginning of the array
+  snakeBody[0] = newHead;
+
+  // If food was eaten, grow the snake and spawn new food
+  if (ateFood) {
+    if (snakeLength < MAX_SNAKE_LENGTH - 1) {
+      snakeLength++;
+    }
+    spawnFood();
+  }
+  // Otherwise, the tail moves forward (no extra action needed because the array is shifted)
+}
+
+// Draw the snake, food, and game-over message (if applicable)
+void drawGame() {
+  display.clearDisplay();
+  
+  // Draw the snake: iterate over each segment and draw a filled rectangle
+  for (int i = 0; i < snakeLength; i++) {
+    int x = snakeBody[i].x * CELL_SIZE;
+    int y = snakeBody[i].y * CELL_SIZE;
+    display.fillRect(x, y, CELL_SIZE, CELL_SIZE, SSD1306_WHITE);
+  }
+  
+  // Draw the food
+  int foodX = food.x * CELL_SIZE;
+  int foodY = food.y * CELL_SIZE;
+  display.fillRect(foodX, foodY, CELL_SIZE, CELL_SIZE, SSD1306_WHITE);
+
+  // If game over, display a message
+  if (gameOver) {
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(20, SCREEN_HEIGHT / 2 - 4);
+    display.print("GAME OVER");
+  }
+
+  display.display();
+}
+
+void setup() {
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  Serial.begin(9600);
+
+  // Initialize display
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // 0x3C is a common I²C address for these OLEDs
+    Serial.println(F("SSD1306 allocation failed"));
+    for (;;);
+  }
+  display.clearDisplay();
+  display.display();
+
+  // Seed the random number generator
+  randomSeed(analogRead(0));
+
+  // Initialize the snake in the center of the grid
+  int startX = GRID_WIDTH / 2;
+  int startY = GRID_HEIGHT / 2;
+  for (int i = 0; i < snakeLength; i++) {
+    snakeBody[i].x = startX - i;
+    snakeBody[i].y = startY;
+  }
+
+  spawnFood();
+}
+
+void loop() {
+  // If the game is over, show the game over screen and wait for a button press to restart
+  if (gameOver) {
+    drawGame();
+    if (digitalRead(BUTTON_PIN) == LOW) {
+      delay(200); // simple debounce
+      // Reset game variables
+      snakeLength = 3;
+      int startX = GRID_WIDTH / 2;
+      int startY = GRID_HEIGHT / 2;
+      for (int i = 0; i < snakeLength; i++) {
+        snakeBody[i].x = startX - i;
+        snakeBody[i].y = startY;
+      }
+      dx = 1;
+      dy = 0;
+      gameOver = false;
+      spawnFood();
+    }
+    return;
+  }
+
+  // Check for button press to change the snake’s direction.
+  // This uses a simple edge-detection debounce.
+  static bool lastButtonState = HIGH;
+  bool buttonState = digitalRead(BUTTON_PIN);
+  if (lastButtonState == HIGH && buttonState == LOW) {
+    changeDirection();
+    delay(50);  // basic debounce delay
+  }
+  lastButtonState = buttonState;
+
+  // Move the snake at regular intervals
+  if (millis() - lastMoveTime > moveInterval) {
+    lastMoveTime = millis();
+    updateGame();
+    drawGame();
+  }
+}

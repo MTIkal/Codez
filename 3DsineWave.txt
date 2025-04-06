@@ -1,0 +1,49 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET    -1
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// Fixed-point math (scale everything up by 10x to avoid floats)
+const int8_t wave_size = 5;   // Grid spacing
+const int8_t max_z = 10;      // Max wave height
+const int8_t grid_size = 40;  // Total size of grid
+int8_t angle = 0;             // Rotation angle in fixed-point (0-255)
+
+void setup() {
+    Serial.begin(115200);
+    if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { 
+        Serial.println(F("SSD1306 allocation failed"));
+        for (;;);
+    }
+    display.clearDisplay();
+}
+
+void loop() {
+    display.clearDisplay();
+    
+    // Loop through a reduced resolution grid
+    for (int8_t x = -grid_size; x <= grid_size; x += wave_size) {
+        for (int8_t y = -grid_size; y <= grid_size; y += wave_size) {
+            int8_t z = (max_z * (sin16((x * x + y * y) / 50 + angle) >> 8));  // Approximate sine function
+            
+            int8_t x2d = 64 + x - (y >> 1);  // Simple perspective projection
+            int8_t y2d = 32 + z - (y >> 1);
+
+            // Use larger pixels for better speed
+            display.drawPixel(x2d, y2d, WHITE);
+        }
+    }
+
+    display.display();
+    angle += 5;  // Small angle increment
+    delay(30);  // Lower delay for smoother motion
+}
+
+// Approximate sin(x) using fixed-point math (0-255 range for x)
+int16_t sin16(int16_t angle) {
+    return (int16_t)(sin(angle * 3.14159 / 128) * 256);
+}
